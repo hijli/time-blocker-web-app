@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Blocker Web App Prototype</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            width: 100vw;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-color: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+        }
+        #root {
+            width: 100%;
+            max-width: 1400px; /* Increased max-width for multi-day view */
+        }
+        /* Custom scrollbar for task lists */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        /* Removed color-swatch styles as color functionality is removed */
+        /* Ensure time slot content grows */
+        .time-slot-content {
+            flex-grow: 1;
+            min-height: 30px; /* Minimum height for droppable area */
+        }
+
+        /* Styles for resize handles */
+        .resize-handle {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 8px; /* Height of the handle */
+            background-color: rgba(0, 0, 0, 0.2); /* Semi-transparent handle */
+            cursor: ns-resize;
+            z-index: 10; /* Above task content */
+            opacity: 0; /* Hidden by default */
+            transition: opacity 0.2s;
+        }
+        .scheduled-task-item:hover .resize-handle {
+            opacity: 1; /* Show on hover */
+        }
+        .resize-handle-top {
+            top: -4px; /* Half handle height outside for easier grab */
+        }
+        .resize-handle-bottom {
+            bottom: -4px; /* Half handle height outside for easier grab */
+        }
+
+        /* Modal specific styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 90%;
+        }
+
+        /* Delete button style for tasks */
+        .delete-task-button {
+            position: absolute;
+            top: 4px; /* Adjust as needed for padding/margin */
+            right: 4px; /* Adjust as needed for padding/margin */
+            background-color: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 0.75rem; /* text-xs */
+            font-weight: bold;
+            color: #ef4444; /* red-500 */
+            border: 1px solid #ef4444;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 15; /* Ensure it's above task content but below resize handles */
+        }
+        .scheduled-task-item:hover .delete-task-button {
+            opacity: 1;
+        }
+
+        /* Day column fixed width for horizontal scrolling */
+        .day-column {
+            flex-shrink: 0; /* Prevent columns from shrinking */
+            width: 300px; /* Fixed width for each day column */
+        }
+
+        /* Current time indicator line */
+        .current-time-indicator {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px; /* Thickness of the line */
+            background-color: #ef4444; /* Red color */
+            z-index: 20; /* Above tasks */
+            pointer-events: none; /* Don't block clicks/drags on tasks */
+        }
+        .current-time-circle {
+            position: absolute;
+            left: -6px; /* Position circle slightly outside the line */
+            top: -4px; /* Center vertically on the line */
+            width: 10px;
+            height: 10px;
+            background-color: #ef4444; /* Red color */
+            border-radius: 50%;
+            border: 1px solid white; /* Small white border for visibility */
+        }
+        .current-time-label {
+            position: absolute;
+            left: 10px; /* Position label to the right of the circle */
+            top: -8px; /* Adjust vertically */
+            background-color: #ef4444;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel">
+        // Utility function to format time for display (e.g., "09:00 AM")
+        const formatTime = (date) => {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        };
+
+        // Utility function to format date for display (e.g., "Monday, January 10")
+        const formatDate = (date) => {
+            const options = { weekday: 'long', month: 'long', day: 'numeric' };
+            return date.toLocaleDateString(undefined, options);
+        };
+
+        // Utility function to format date for header (e.g., "January 10, 2024")
+        const formatFullDate = (date) => {
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            return date.toLocaleDateString(undefined, options);
+        };
+
+        // TaskItem Component - Represents a draggable task (for left panel)
+        const TaskItem = ({ task, index, onDragStart, onDragEnd }) => {
+            return (
+                <div
+                    id={`task-${task.id}`}
+                    draggable="true"
+                    onDragStart={(e) => onDragStart(e, task, index)}
+                    onDragEnd={onDragEnd}
+                    className="p-3 rounded-md shadow-sm border border-gray-200 mb-2 cursor-grab active:cursor-grabbing text-gray-800 text-sm flex flex-col relative group"
+                    style={{ backgroundColor: '#ffffff' }} /* Default white background */
+                >
+                    <div className="flex justify-between items-center">
+                        <span>{task.name}</span>
+                        {task.duration && (
+                            <span className="text-xs text-gray-500 ml-2">
+                                {task.duration} min
+                            </span>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // ScheduledTaskItem Component - Represents a task in the time slots (resizable and draggable)
+        const ScheduledTaskItem = ({ task, onDragStart, onDragEnd, onScheduledTaskTimeChange, onRemovePlaceholder, onDeleteTask, timeUnitHeightPx }) => {
+            const [isResizing, setIsResizing] = React.useState(false);
+            const [resizeStartInfo, setResizeStartInfo] = React.useState(null); // { clientY, originalTime, originalDuration, handleType }
+
+            // Calculate height and top position for the task item based on pixels per minute
+            const pixelsPerMinute = timeUnitHeightPx / 60; // 60 minutes in an hour
+            const taskHeight = task.duration * pixelsPerMinute;
+            const minutesFromMidnight = task.time.getHours() * 60 + task.time.getMinutes();
+            const topPosition = minutesFromMidnight * pixelsPerMinute;
+
+            // Handler for resizing start (mouse down on handle)
+            const handleResizeMouseDown = (e, handleType) => {
+                // Prevent resizing for placeholder tasks
+                if (task.isUnaccomplishedPlaceholder) return;
+
+                e.stopPropagation(); // Prevent drag of the whole task
+                setIsResizing(true);
+                setResizeStartInfo({
+                    clientY: e.clientY,
+                    originalTime: new Date(task.time),
+                    originalDuration: task.duration,
+                    handleType: handleType,
+                });
+            };
+
+            // Global mouse move handler for resizing
+            const handleGlobalMouseMove = React.useCallback((e) => {
+                if (!isResizing || !resizeStartInfo) return;
+
+                const deltaY = e.clientY - resizeStartInfo.clientY;
+                const minutesPerPixel = 30 / timeUnitHeightPx; // Minutes represented by 1 pixel
+                // Snap to 5-minute intervals for smoother resizing
+                const minutesDelta = Math.round(deltaY * minutesPerPixel / 5) * 5;
+
+                let newStartTime = new Date(resizeStartInfo.originalTime);
+                let newDuration = resizeStartInfo.originalDuration;
+
+                if (resizeStartInfo.handleType === 'bottom') {
+                    newDuration = resizeStartInfo.originalDuration + minutesDelta;
+                } else if (resizeStartInfo.handleType === 'top') {
+                    newStartTime = new Date(resizeStartInfo.originalTime.getTime() + minutesDelta * 60 * 1000);
+                    newDuration = resizeStartInfo.originalDuration - minutesDelta;
+                }
+
+                // Ensure duration is at least 5 minutes
+                newDuration = Math.max(5, newDuration);
+
+                // Ensure start time doesn't go before the beginning of the day (00:00)
+                const startOfDay = new Date(task.date);
+                startOfDay.setHours(0, 0, 0, 0);
+                if (newStartTime.getTime() < startOfDay.getTime()) {
+                    newStartTime = startOfDay;
+                    // Adjust duration if start time was capped to avoid negative duration
+                    newDuration = Math.round((task.time.getTime() + task.duration * 60 * 1000 - newStartTime.getTime()) / (60 * 1000));
+                    newDuration = Math.max(5, newDuration); // Ensure minimum duration
+                }
+
+                // Ensure end time doesn't go beyond end of day (23:59)
+                const endOfDay = new Date(task.date);
+                endOfDay.setHours(23, 59, 59, 999);
+                const newEndTime = new Date(newStartTime.getTime() + newDuration * 60 * 1000);
+                if (newEndTime.getTime() > endOfDay.getTime()) {
+                    newDuration = Math.round((endOfDay.getTime() - newStartTime.getTime()) / (60 * 1000));
+                    newDuration = Math.max(5, newDuration); // Ensure minimum duration
+                }
+
+
+                // Update the task in the parent state
+                onScheduledTaskTimeChange(task.id, newStartTime, newDuration);
+
+            }, [isResizing, resizeStartInfo, task.id, task.date, onScheduledTaskTimeChange, pixelsPerMinute]);
+
+            // Global mouse up handler for resizing
+            const handleGlobalMouseUp = React.useCallback(() => {
+                setIsResizing(false);
+                setResizeStartInfo(null);
+            }, []);
+
+            // Attach/detach global event listeners for resizing
+            React.useEffect(() => {
+                if (isResizing) {
+                    document.addEventListener('mousemove', handleGlobalMouseMove);
+                    document.addEventListener('mouseup', handleGlobalMouseUp);
+                } else {
+                    document.removeEventListener('mousemove', handleGlobalMouseMove);
+                    document.removeEventListener('mouseup', handleGlobalMouseUp);
+                }
+                return () => {
+                    document.removeEventListener('mousemove', handleGlobalMouseMove);
+                    document.removeEventListener('mouseup', handleGlobalMouseUp);
+                };
+            }, [isResizing, handleGlobalMouseMove, handleGlobalMouseUp]);
+
+
+            // Local states for managing input values for start and end times (for manual input)
+            const [editedStartTimeStr, setEditedStartTimeStr] = React.useState('');
+            const [editedEndTimeStr, setEditedEndTimeStr] = React.useState('');
+
+            // Effect to update local states when task's time or duration changes
+            React.useEffect(() => {
+                if (task.time) {
+                    setEditedStartTimeStr(task.time.toTimeString().substring(0, 5)); // HH:MM format
+                    const endTime = new Date(task.time.getTime() + task.duration * 60 * 1000);
+                    setEditedEndTimeStr(endTime.toTimeString().substring(0, 5)); // HH:MM format
+                } else {
+                    setEditedStartTimeStr('');
+                    setEditedEndTimeStr('');
+                }
+            }, [task.time, task.duration]);
+
+            // Handler for manual start time input change
+            const handleManualStartTimeChange = (e) => {
+                const newTimeStr = e.target.value;
+                setEditedStartTimeStr(newTimeStr);
+
+                if (task.time && onScheduledTaskTimeChange) {
+                    const [hours, minutes] = newTimeStr.split(':').map(Number);
+                    const newStart = new Date(task.date); // Use existing date part
+                    newStart.setHours(hours, minutes, 0, 0);
+
+                    const currentEndTime = new Date(task.time.getTime() + task.duration * 60 * 1000);
+                    const newDurationMs = currentEndTime.getTime() - newStart.getTime();
+                    let newDurationMinutes = Math.round(newDurationMs / (60 * 1000));
+
+                    newDurationMinutes = Math.max(5, newDurationMinutes); // Minimum duration
+
+                    if (newDurationMinutes > 0) {
+                        onScheduledTaskTimeChange(task.id, newStart, newDurationMinutes);
+                    } else {
+                        // If new start time makes duration negative, set duration to minimum
+                        onScheduledTaskTimeChange(task.id, newStart, 5);
+                    }
+                }
+            };
+
+            // Handler for manual end time input change
+            const handleManualEndTimeChange = (e) => {
+                const newTimeStr = e.target.value;
+                setEditedEndTimeStr(newTimeStr);
+
+                if (task.time && onScheduledTaskTimeChange) {
+                    const [hours, minutes] = newTimeStr.split(':').map(Number);
+                    const newEnd = new Date(task.date); // Use existing date part
+                    newEnd.setHours(hours, minutes, 0, 0);
+
+                    const newDurationMs = newEnd.getTime() - task.time.getTime();
+                    let newDurationMinutes = Math.round(newDurationMs / (60 * 1000));
+
+                    newDurationMinutes = Math.max(5, newDurationMinutes); // Minimum duration
+
+                    if (newDurationMinutes > 0) {
+                        onScheduledTaskTimeChange(task.id, task.time, newDurationMinutes); // Only update duration
+                    } else {
+                        // If new end time makes duration negative or zero, set duration to minimum
+                        onScheduledTaskTimeChange(task.id, task.time, 5);
+                    }
+                }
+            };
+
+
+            return (
+                <div
+                    id={`scheduled-task-${task.id}`}
+                    draggable={!task.isUnaccomplishedPlaceholder} // Make placeholder non-draggable
+                    onDragStart={(e) => {
+                        if (isResizing || task.isUnaccomplishedPlaceholder) { // Prevent drag if resizing or placeholder
+                            e.preventDefault();
+                            return;
+                        }
+                        onDragStart(e, task, null, 'scheduled');
+                    }}
+                    onDragEnd={onDragEnd}
+                    className="absolute w-[calc(100%-8px)] left-1 top-0 p-2 rounded-md shadow-sm border border-gray-300 text-gray-800 text-sm flex flex-col scheduled-task-item"
+                    style={{
+                        backgroundColor: task.isUnaccomplishedPlaceholder ? '#d1d5db' : '#ffffff', /* Always white for regular tasks, grey for placeholder */
+                        height: `${taskHeight}px`,
+                        top: `${topPosition}px`,
+                        zIndex: isResizing ? 20 : 5,
+                        cursor: task.isUnaccomplishedPlaceholder ? 'default' : 'grab', /* Change cursor for placeholder */
+                    }}
+                >
+                    {/* Resize handle top (hidden for placeholders) */}
+                    {!task.isUnaccomplishedPlaceholder && (
+                        <div
+                            className="resize-handle resize-handle-top"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'top')}
+                        ></div>
+                    )}
+
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="font-semibold">{task.name}</span>
+                        {/* Delete button for regular tasks AND placeholder tasks, using the same style */}
+                        <button
+                            onClick={() => task.isUnaccomplishedPlaceholder ? onRemovePlaceholder(task.id) : onDeleteTask(task.id)}
+                            className="delete-task-button"
+                            title={task.isUnaccomplishedPlaceholder ? "Remove placeholder" : "Delete task"}
+                        >
+                            &times;
+                        </button>
+                    </div>
+                    {/* Always show manual time inputs for scheduled tasks */}
+                    <div className="flex space-x-1 text-xs text-gray-600 mb-1">
+                        <input
+                            type="time"
+                            value={editedStartTimeStr}
+                            onChange={handleManualStartTimeChange}
+                            className="p-0.5 text-xs bg-white border border-gray-300 rounded-md w-1/2"
+                            title="Change Start Time"
+                            disabled={task.isUnaccomplishedPlaceholder} /* Disable for placeholders */
+                        />
+                        <input
+                            type="time"
+                            value={editedEndTimeStr}
+                            onChange={handleManualEndTimeChange}
+                            className="p-0.5 text-xs bg-white border border-gray-300 rounded-md w-1/2"
+                            title="Change End Time"
+                            disabled={task.isUnaccomplishedPlaceholder} /* Disable for placeholders */
+                        />
+                    </div>
+
+                    {/* Resize handle bottom (hidden for placeholders) */}
+                    {!task.isUnaccomplishedPlaceholder && (
+                        <div
+                            className="resize-handle resize-handle-bottom"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'bottom')}
+                        ></div>
+                    )}
+                </div>
+            );
+        };
+
+        // TimeSlot Component - Represents a droppable time slot (now mostly a visual grid line)
+        const TimeSlot = ({ time, onDrop, onDragOver, isCurrentSlot, timeUnitHeightPx, slotIntervalHours }) => {
+            // Calculate height of the time slot based on the interval
+            const slotHeight = timeUnitHeightPx * slotIntervalHours;
+
+            return (
+                <div
+                    className={`flex items-start text-gray-700 text-xs ${isCurrentSlot ? 'bg-blue-50' : 'bg-white'}`}
+                    onDrop={onDrop}
+                    onDragOver={onDragOver}
+                    data-time={time.toISOString()}
+                    style={{ height: `${slotHeight}px`, borderBottom: '1px solid #e5e7eb' }} /* Fixed height for grid */
+                >
+                    <span className="font-semibold text-gray-500 w-16 flex-shrink-0 p-2">{formatTime(time)}</span> {/* Always show time label for 4-hour slots */}
+                    <div className="flex-grow min-h-[30px] time-slot-content">
+                        {/* Tasks are now absolutely positioned over these slots */}
+                    </div>
+                </div>
+            );
+        };
+
+        // Confirmation Modal Component
+        const ConfirmationModal = ({ isOpen, onClose, taskName, fromDay, toDay, onConfirmMove, onConfirmDuplicate }) => {
+            if (!isOpen) return null;
+
+            return (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <h3 className="text-lg font-semibold mb-4 text-gray-800">Move Task: "{taskName}"</h3>
+                        <p className="text-gray-700 mb-6">
+                            You are moving this task from <span className="font-medium">{formatDate(fromDay)}</span> to <span className="font-medium">{formatDate(toDay)}</span>.
+                            What would you like to do?
+                        </p>
+                        <div className="flex flex-col space-y-3">
+                            <button
+                                onClick={() => { onConfirmMove(); onClose(); }}
+                                className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out shadow-md"
+                            >
+                                Completely Move Task (Not accomplished on {formatDate(fromDay).split(',')[0]})
+                            </button>
+                            <button
+                                onClick={() => { onConfirmDuplicate(); onClose(); }}
+                                className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out shadow-md"
+                            >
+                                Counting Work on Same Task (Duplicate for {formatDate(toDay).split(',')[0]})
+                            </button>
+                            <button
+                                onClick={onClose}
+                                className="w-full bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out shadow-md"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // CurrentTimeIndicator Component
+        const CurrentTimeIndicator = ({ timeUnitHeightPx }) => {
+            const [top, setTop] = React.useState(0);
+            const [currentTimeLabel, setCurrentTimeLabel] = React.useState('');
+
+            const calculatePosition = React.useCallback(() => {
+                const now = new Date();
+                const minutes = now.getHours() * 60 + now.getMinutes();
+                const pixelsPerMinute = timeUnitHeightPx / 60; // 60 minutes in an hour
+                setTop(minutes * pixelsPerMinute);
+                setCurrentTimeLabel(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            }, [timeUnitHeightPx]);
+
+            React.useEffect(() => {
+                calculatePosition(); // Set initial position
+                const interval = setInterval(calculatePosition, 60 * 1000); // Update every minute
+                return () => clearInterval(interval); // Cleanup interval on unmount
+            }, [calculatePosition]);
+
+            return (
+                <div
+                    className="current-time-indicator"
+                    style={{ top: `${top}px` }}
+                >
+                    <div className="current-time-circle"></div>
+                    <span className="current-time-label">{currentTimeLabel}</span>
+                </div>
+            );
+        };
+
+
+        // DayColumn Component - Encapsulates a single day's view
+        const DayColumn = ({
+            dayDate,
+            scheduledTasksForDay,
+            timeSlotsForDay, // This now represents ALL 30-min slots for the day
+            timeUnitHeightPx, // Height for 1 hour
+            onDragStart,
+            onDragEnd,
+            onTimeSlotDrop,
+            onScheduledTaskTimeChange,
+            onRemovePlaceholder,
+            onDeleteTask,
+            onAddTaskToDay,
+            isCurrentDay
+        }) => {
+            const [showAddTaskForm, setShowAddTaskForm] = React.useState(false);
+            const [newTaskName, setNewTaskName] = React.useState('');
+            const [newTaskDuration, setNewTaskDuration] = React.useState(30);
+            const [newTaskStartTime, setNewTaskStartTime] = React.useState('09:00'); // Default start time
+            // Removed selectedColor state as color functionality is removed
+
+            const handleAddTaskSubmit = () => {
+                if (!newTaskName.trim() || newTaskDuration <= 0) {
+                    // Basic validation
+                    return;
+                }
+                // Convert newTaskStartTime string to a Date object for the current day
+                const [hours, minutes] = newTaskStartTime.split(':').map(Number);
+                const taskDateTime = new Date(dayDate);
+                taskDateTime.setHours(hours, minutes, 0, 0);
+
+                onAddTaskToDay(dayDate, newTaskName, newTaskDuration, taskDateTime); // Removed color arg
+                setShowAddTaskForm(false); // Hide form
+                setNewTaskName(''); // Reset form fields
+                setNewTaskDuration(30);
+                setNewTaskStartTime('09:00');
+                // Removed setSelectedColor
+            };
+
+            // Determine which time slots to render for this day (condensed view)
+            const visibleTimeSlots = React.useMemo(() => {
+                const allPossibleSlots = timeSlotsForDay; // All 48 (30-min) slots for the day
+                const slotsToRender = new Set();
+
+                // Always add 4-hour interval slots
+                for (let i = 0; i < 24; i += 4) { // Iterate every 4 hours
+                    const hourSlot = new Date(dayDate);
+                    hourSlot.setHours(i, 0, 0, 0);
+                    slotsToRender.add(hourSlot.toISOString());
+                }
+
+                // Add slots around scheduled tasks (buffer of 2 hours before/after)
+                const bufferMinutes = 120; // 2 hours buffer
+                scheduledTasksForDay.forEach(task => {
+                    const taskStartMillis = task.time.getTime();
+                    const taskEndMillis = taskStartMillis + task.duration * 60 * 1000;
+
+                    allPossibleSlots.forEach(slot => {
+                        const slotMillis = slot.getTime();
+                        const slotEndMillis = slotMillis + 30 * 60 * 1000; // 30-min slot duration
+
+                        // Check if slot is within task's time range + buffer
+                        if (
+                            (slotMillis >= taskStartMillis - bufferMinutes * 60 * 1000 && slotMillis < taskEndMillis + bufferMinutes * 60 * 1000) ||
+                            (slotEndMillis > taskStartMillis - bufferMinutes * 60 * 1000 && slotEndMillis <= taskEndMillis + bufferMinutes * 60 * 1000)
+                        ) {
+                            slotsToRender.add(slot.toISOString());
+                        }
+                    });
+                });
+
+                // If it's the current day, ensure the current time slot and its neighbors are visible
+                if (isCurrentDay) {
+                    const now = new Date();
+                    const currentHour = now.getHours();
+                    const currentMinute = now.getMinutes();
+                    // Find the 30-min slot that contains the current time
+                    const current30MinSlotTime = new Date(dayDate);
+                    current30MinSlotTime.setHours(currentHour, currentMinute < 30 ? 0 : 30, 0, 0);
+
+                    const bufferMinutesForCurrentTime = 60; // 1 hour buffer around current time
+                    allPossibleSlots.forEach(slot => {
+                        const slotMillis = slot.getTime();
+                        const slotEndMillis = slotMillis + 30 * 60 * 1000;
+
+                        if (
+                            (slotMillis >= now.getTime() - bufferMinutesForCurrentTime * 60 * 1000 && slotMillis < now.getTime() + bufferMinutesForCurrentTime * 60 * 1000) ||
+                            (slotEndMillis > now.getTime() - bufferMinutesForCurrentTime * 60 * 1000 && slotEndMillis <= now.getTime() + bufferMinutesForCurrentTime * 60 * 1000)
+                        ) {
+                            slotsToRender.add(slot.toISOString());
+                        }
+                    });
+                }
+
+                // Convert back to Date objects and sort
+                return Array.from(slotsToRender)
+                            .map(isoString => new Date(isoString))
+                            .sort((a, b) => a.getTime() - b.getTime());
+            }, [dayDate, scheduledTasksForDay, timeSlotsForDay, isCurrentDay]);
+
+
+            return (
+                <div id={`day-${dayDate.toISOString().split('T')[0]}`} className="flex flex-col border border-gray-200 rounded-lg overflow-hidden day-column">
+                    <div className="bg-gray-100 p-3 border-b border-gray-200 text-center">
+                        <h3 className="font-semibold text-gray-800">{formatDate(dayDate).split(',')[0]}</h3>
+                        <p className="text-sm text-gray-600">{formatDate(dayDate).split(',')[1].trim()}</p>
+                    </div>
+                    <div className="p-2 border-b border-gray-200 text-center">
+                        {!showAddTaskForm ? (
+                            <button
+                                onClick={() => setShowAddTaskForm(true)}
+                                className="text-blue-500 hover:text-blue-700 text-sm font-semibold"
+                            >
+                                + Add task
+                            </button>
+                        ) : (
+                            <div className="bg-gray-50 p-3 rounded-md space-y-2 text-left">
+                                <input
+                                    type="text"
+                                    placeholder="Task Name"
+                                    value={newTaskName}
+                                    onChange={(e) => setNewTaskName(e.target.value)}
+                                    className="w-full px-2 py-1 border rounded-md text-sm"
+                                />
+                                <input
+                                    type="number"
+                                    placeholder="Duration (min)"
+                                    value={newTaskDuration}
+                                    onChange={(e) => setNewTaskDuration(parseInt(e.target.value) || 0)}
+                                    min="5"
+                                    step="5"
+                                    className="w-full px-2 py-1 border rounded-md text-sm"
+                                />
+                                <input
+                                    type="time"
+                                    value={newTaskStartTime}
+                                    onChange={(e) => setNewTaskStartTime(e.target.value)}
+                                    className="w-full px-2 py-1 border rounded-md text-sm"
+                                />
+                                {/* Removed color picker */}
+                                <div className="flex space-x-2 mt-2">
+                                    <button
+                                        onClick={handleAddTaskSubmit}
+                                        className="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs py-1 rounded-md"
+                                    >
+                                        Add
+                                    </button>
+                                    <button
+                                        onClick={() => setShowAddTaskForm(false)}
+                                        className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs py-1 rounded-md"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="overflow-y-auto custom-scrollbar flex-grow relative">
+                        {visibleTimeSlots.map((slotTime) => ( /* Use visibleTimeSlots here */
+                            <TimeSlot
+                                key={slotTime.toISOString()}
+                                time={slotTime}
+                                onDrop={(e) => onTimeSlotDrop(e, dayDate, slotTime)}
+                                onDragOver={(e) => e.preventDefault()} // Allow dropping
+                                isCurrentSlot={isCurrentDay && slotTime.getHours() === new Date().getHours() && (new Date().getMinutes() >= slotTime.getMinutes() && new Date().getMinutes() < (slotTime.getMinutes() + 30))}
+                                timeUnitHeightPx={timeUnitHeightPx}
+                                slotIntervalHours={4} /* Pass the interval for height calculation */
+                            />
+                        ))}
+                        {scheduledTasksForDay.map((task) => (
+                            <ScheduledTaskItem
+                                key={task.id}
+                                task={task}
+                                onDragStart={onDragStart}
+                                onDragEnd={onDragEnd}
+                                onScheduledTaskTimeChange={onScheduledTaskTimeChange}
+                                onRemovePlaceholder={onRemovePlaceholder}
+                                onDeleteTask={onDeleteTask}
+                                timeUnitHeightPx={timeUnitHeightPx} /* Pass timeUnitHeightPx */
+                            />
+                        ))}
+                        {isCurrentDay && <CurrentTimeIndicator timeUnitHeightPx={timeUnitHeightPx} />}
+                    </div>
+                </div>
+            );
+        };
+
+
+        // Main App component for the web application
+        const App = () => {
+            const [message, setMessage] = React.useState('');
+            const [isLoading, setIsLoading] = React.useState(false);
+
+            // Define the height of a single hour in pixels
+            const TIME_UNIT_HEIGHT_PX = 60; // 60px represents 1 hour
+
+            // State for managing the currently viewed date range
+            const [centralViewDate, setCentralViewDate] = React.useState(new Date());
+            const NUM_DAYS_TO_RENDER = 7; // Render 7 days at a time (e.g., 3 before, central, 3 after)
+
+            // Task states with initial colors
+            const [topTasks, setTopTasks] = React.useState([
+                { id: 'tt1', name: 'Review PRs', duration: 60 },
+                { id: 'tt2', name: 'Prepare for Meeting', duration: 30 },
+                { id: 'tt3', name: 'Respond to Emails', duration: 45 },
+                { id: 'tt4', name: 'Code Feature X', duration: 90 },
+                { id: 'tt5', name: 'Research Topic Y', duration: 60 },
+                { id: 'tt6', name: 'Team Sync', duration: 30 },
+                { id: 'tt7', name: 'Client Call', duration: 60 },
+            ]);
+            const [dumpedTasks, setDumpedTasks] = React.useState([
+                { id: 'dt1', name: 'Organize files', duration: 30 },
+                { id: 'dt2', name: 'Plan weekend', duration: 15 },
+                { id: 'dt3', name: 'Call client Z', duration: 20 },
+                { id: 'dt4', name: 'Read article', duration: 40 },
+                { id: 'dt5', name: 'Brainstorm ideas', duration: 60 },
+                { id: 'dt6', name: 'Update resume', duration: 90 },
+                { id: 'dt7', name: 'Research new tech', duration: 45 },
+                { id: 'dt8', name: 'Clean desk', duration: 15 },
+                { id: 'dt9', name: 'Review budget', duration: 30 },
+                { id: 'dt10', name: 'Learn new skill', duration: 60 },
+                { id: 'dt11', name: 'Prepare dinner', duration: 30 },
+                { id: 'dt12', name: 'Exercise', duration: 45 },
+                { id: 'dt13', name: 'Meditate', duration: 15 },
+                { id: 'dt14', name: 'Read book', duration: 60 },
+                { id: 'dt15', name: 'Write journal', duration: 20 },
+            ]);
+            // Scheduled tasks will now have a 'date' property (Date object for the day) and a 'time' property (Date object for exact time)
+            const [scheduledTasks, setScheduledTasks] = React.useState([]);
+
+            // State for adding new tasks to dump
+            const [newTaskName, setNewTaskName] = React.useState('');
+            const [newTaskDuration, setNewTaskDuration] = React.useState(30);
+            // Removed selectedColor state
+
+            // Drag and Drop states
+            const [draggingTask, setDraggingTask] = React.useState(null); // The task being dragged
+            const [draggedFromList, setDraggedFromList] = React.useState(null); // 'top', 'dumped', or 'scheduled'
+
+            // Modal states
+            const [isModalOpen, setIsModalOpen] = React.useState(false);
+            const [modalTaskInfo, setModalTaskInfo] = React.useState(null); // { task, fromDay, toDay, slotTime }
+
+            // Ref for the scrollable day container
+            const dayColumnsRef = React.useRef(null);
+            const COLUMN_WIDTH_PX = 300; // Must match .day-column width in CSS
+
+            // Generate days based on centralViewDate
+            const generateDays = React.useCallback((centralDate, numDays) => {
+                const daysArray = [];
+                const startDayOffset = Math.floor(numDays / 2); // How many days before central date
+
+                for (let i = -startDayOffset; i < numDays - startDayOffset; i++) {
+                    const dayDate = new Date(centralDate);
+                    dayDate.setDate(centralDate.getDate() + i);
+                    dayDate.setHours(0, 0, 0, 0); // Normalize to start of day
+                    daysArray.push(dayDate);
+                }
+                return daysArray;
+            }, []);
+
+            const days = React.useMemo(() => generateDays(centralViewDate, NUM_DAYS_TO_RENDER), [centralViewDate, generateDays]);
+
+            // Generate ALL 30-minute time slots for a given day (used internally for calculations)
+            const generateAllTimeSlotsForDay = React.useCallback((dayDate) => {
+                const slots = [];
+                const startOfDay = new Date(dayDate);
+                startOfDay.setHours(0, 0, 0, 0);
+
+                for (let i = 0; i < 24 * 2; i++) { // 24 hours * 2 (for 30-min intervals)
+                    const slotTime = new Date(startOfDay.getTime() + i * 30 * 60 * 1000);
+                    slots.push(slotTime);
+                }
+                return slots;
+            }, []);
+
+            // Function to scroll to today's column
+            const scrollToToday = React.useCallback(() => {
+                const today = new Date();
+                const todayString = today.toISOString().split('T')[0];
+                const todayColumnElement = document.getElementById(`day-${todayString}`);
+
+                if (todayColumnElement && dayColumnsRef.current) {
+                    const scrollContainer = dayColumnsRef.current;
+                    const todayColumnOffset = todayColumnElement.offsetLeft;
+                    // Calculate scroll position to center "Today" column
+                    scrollContainer.scrollLeft = todayColumnOffset - (scrollContainer.clientWidth / 2) + (COLUMN_WIDTH_PX / 2);
+
+                    // Scroll to current time within today's column
+                    const currentHour = today.getHours();
+                    const currentMinute = today.getMinutes();
+                    const targetMinute = currentMinute < 30 ? '00' : '30';
+                    const currentSlotElement = todayColumnElement.querySelector(`[data-time*="${currentHour}:${targetMinute}"]`);
+                    if (currentSlotElement) {
+                        currentSlotElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            }, [days]); // Dependency on `days` to ensure `document.getElementById` works after days are rendered
+
+            // Scroll to current time for the "Today" column on initial load
+            React.useEffect(() => {
+                scrollToToday(); // Call the wrapped function
+            }, [days, scrollToToday]); // Add scrollToToday to dependencies
+
+
+            // Handle horizontal scrolling for infinite days
+            const handleHorizontalScroll = React.useCallback(() => {
+                const container = dayColumnsRef.current;
+                if (!container) return;
+
+                const scrollLeft = container.scrollLeft;
+                const scrollWidth = container.scrollWidth;
+                const clientWidth = container.clientWidth;
+
+                const scrollThreshold = COLUMN_WIDTH_PX * (NUM_DAYS_TO_RENDER / 4); // Load new days when near 1/4 of the visible days
+
+                // Scrolling left (towards past days)
+                if (scrollLeft < scrollThreshold && scrollLeft > 0) { // Add a small buffer to prevent constant re-rendering at 0
+                    setCentralViewDate(prevDate => {
+                        const newDate = new Date(prevDate);
+                        newDate.setDate(newDate.getDate() - (NUM_DAYS_TO_RENDER / 2)); // Shift central date back
+                        return newDate;
+                    });
+                    // Adjust scroll position to maintain relative view
+                    container.scrollLeft += COLUMN_WIDTH_PX * (NUM_DAYS_TO_RENDER / 2);
+                }
+                // Scrolling right (towards future days)
+                else if (scrollLeft + clientWidth > scrollWidth - scrollThreshold) {
+                    setCentralViewDate(prevDate => {
+                        const newDate = new Date(prevDate);
+                        newDate.setDate(newDate.getDate() + (NUM_DAYS_TO_RENDER / 2)); // Shift central date forward
+                        return newDate;
+                    });
+                    // Adjust scroll position to maintain relative view
+                    container.scrollLeft -= COLUMN_WIDTH_PX * (NUM_DAYS_TO_RENDER / 2);
+                }
+            }, [NUM_DAYS_TO_RENDER]);
+
+            React.useEffect(() => {
+                const container = dayColumnsRef.current;
+                if (container) {
+                    container.addEventListener('scroll', handleHorizontalScroll);
+                }
+                return () => {
+                    if (container) {
+                        container.removeEventListener('scroll', handleHorizontalScroll);
+                    }
+                };
+            }, [handleHorizontalScroll]);
+
+
+            // Drag start handler
+            const handleDragStart = (e, task, index, listType) => {
+                e.dataTransfer.setData('text/plain', task.id);
+                setDraggingTask(task);
+                setDraggedFromList(listType);
+                e.currentTarget.classList.add('opacity-50');
+            };
+
+            // Drag end handler (for cleanup)
+            const handleDragEnd = (e) => {
+                e.currentTarget.classList.remove('opacity-50');
+                setDraggingTask(null);
+                setDraggedFromList(null);
+            };
+
+            // Drag over handler for droppable areas
+            const handleDragOver = (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            };
+
+            // Drop handler for time slots in a specific day
+            const handleTimeSlotDrop = (e, dayDate, slotTime) => {
+                e.preventDefault();
+                if (!draggingTask) return;
+
+                // Check if it's a cross-day move for a scheduled task
+                if (draggedFromList === 'scheduled' && draggingTask.date && draggingTask.date.toDateString() !== dayDate.toDateString()) {
+                    // Open confirmation modal
+                    setModalTaskInfo({ task: draggingTask, fromDay: draggingTask.date, toDay: dayDate, slotTime: slotTime });
+                    setIsModalOpen(true);
+                    return; // Stop further processing here, wait for modal choice
+                }
+
+                // If not a cross-day scheduled move, proceed with standard logic
+                handleTaskMovement(draggingTask, draggedFromList, dayDate, slotTime);
+            };
+
+            // Centralized function to handle task movement based on modal choice or direct drop
+            const handleTaskMovement = (taskToMove, originalListType, targetDayDate, targetSlotTime, isDuplicate = false) => {
+                // Create the new scheduled task object
+                const newScheduledTask = {
+                    ...taskToMove,
+                    id: isDuplicate ? `duplicate-${taskToMove.id}-${Date.now()}` : taskToMove.id, // Ensure unique ID for duplicate
+                    name: isDuplicate ? `${taskToMove.name} (Cont.)` : taskToMove.name, // Indicate continuation for duplicate
+                    date: targetDayDate,
+                    time: targetSlotTime,
+                    // color is no longer part of the task object
+                };
+
+                setScheduledTasks(prev => {
+                    let updated = [...prev];
+
+                    if (originalListType === 'scheduled') {
+                        const isCrossDayMove = taskToMove.date && taskToMove.date.toDateString() !== targetDayDate.toDateString();
+
+                        if (isCrossDayMove && !isDuplicate) {
+                            // If completely moving (cross-day), replace original with placeholder
+                            const originalTaskIndex = updated.findIndex(t => t.id === taskToMove.id && t.date.toDateString() === taskToMove.date.toDateString());
+                            if (originalTaskIndex !== -1) {
+                                updated[originalTaskIndex] = {
+                                    id: `placeholder-${taskToMove.id}-${Date.now()}`, // Unique ID for placeholder
+                                    name: `${taskToMove.name} (Unaccomplished)`,
+                                    duration: taskToMove.duration,
+                                    // color is no longer part of the task object
+                                    date: taskToMove.date, // Keep original date
+                                    time: taskToMove.time, // Keep original time
+                                    isUnaccomplishedPlaceholder: true, // Mark as placeholder
+                                };
+                            }
+                        } else if (!isCrossDayMove && !isDuplicate) {
+                            // This is a same-day move for a scheduled task. Remove the original instance.
+                            // Only filter out if it's a scheduled task being moved within the same day
+                            updated = updated.filter(t => !(t.id === taskToMove.id && t.date.toDateString() === taskToMove.date.toDateString()));
+                        }
+                        // If isDuplicate is true (from modal), the original task is kept as is, and the new one is added.
+                        // This case is already handled by the conditions above.
+
+                    } else if (originalListType === 'top') {
+                        setTopTasks(prevTop => prevTop.filter(t => t.id !== taskToMove.id));
+                    } else if (originalListType === 'dumped') {
+                        setDumpedTasks(prevDumped => prevDumped.filter(t => t.id !== taskToMove.id));
+                    }
+
+                    // Add the new/moved task to the target day
+                    updated.push(newScheduledTask);
+
+                    // Sort by day then by time
+                    return updated.sort((a, b) => {
+                        if (a.date.getTime() !== b.date.getTime()) {
+                            return a.date.getTime() - b.date.getTime();
+                        }
+                        return a.time.getTime() - b.time.getTime();
+                    });
+                });
+
+                setMessage(`"${newScheduledTask.name}" scheduled for ${formatDate(targetDayDate)} at ${formatTime(targetSlotTime)}.`);
+            };
+
+            // Modal confirmation handlers
+            const confirmMoveTask = () => {
+                if (modalTaskInfo) {
+                    // "Completely Move Task" option: replace original with placeholder, add new
+                    handleTaskMovement(modalTaskInfo.task, 'scheduled', modalTaskInfo.toDay, modalTaskInfo.slotTime, false);
+                }
+            };
+
+            const confirmDuplicateTask = () => {
+                if (modalTaskInfo) {
+                    // "Counting Work on Same Task" option: keep original, add new (duplicate)
+                    handleTaskMovement(modalTaskInfo.task, 'none', modalTaskInfo.toDay, modalTaskInfo.slotTime, true);
+                    setMessage(`"${modalTaskInfo.task.name} (Cont.)" continued on ${formatDate(modalTaskInfo.toDay)}.`);
+                }
+            };
+
+            // Function to remove a placeholder task
+            const handleRemovePlaceholder = (taskId) => {
+                setScheduledTasks(prev => prev.filter(task => task.id !== taskId));
+                setMessage('Unaccomplished task placeholder removed.');
+            };
+
+            // Function to delete any scheduled task (newly added)
+            const handleDeleteTask = (taskId) => {
+                setScheduledTasks(prev => prev.filter(task => task.id !== taskId));
+                setMessage('Task deleted.');
+            };
+
+
+            // This handler is for reordering *within* the scheduled tasks list if needed,
+            // but with absolute positioning, explicit reordering by drag-and-drop on tasks themselves
+            // is less about index and more about changing their `time` property.
+            // For now, this will primarily be used for "dropping a scheduled task onto another scheduled task"
+            // to potentially swap or insert, which is complex with absolute positioning.
+            // I'll keep it as a placeholder for simpler reordering if task items were in a flex/grid layout.
+            const handleScheduledTaskDrop = (e, targetTaskIndex) => {
+                e.preventDefault();
+                // This logic needs to be re-evaluated for absolute positioning.
+                // For now, the primary way to move scheduled tasks is by dragging them onto TimeSlots.
+                console.log("Scheduled task dropped on another scheduled task - reordering logic needs refinement for absolute positioning.");
+            };
+
+
+            // Function to add a new task to the Dumped Tasks list (left panel)
+            const handleAddTaskToDump = () => {
+                if (!newTaskName.trim()) {
+                    setMessage('Please enter a task name for the new task.');
+                    return;
+                }
+                if (newTaskDuration <= 0) {
+                    setMessage('New task duration must be a positive number.');
+                    return;
+                }
+
+                const newId = `dt-${Date.now()}`; // Unique ID for the new task
+                const taskToAdd = {
+                    id: newId,
+                    name: newTaskName.trim(),
+                    duration: newTaskDuration,
+                    // Removed color from taskToAdd
+                };
+
+                setDumpedTasks(prev => [...prev, taskToAdd]);
+                setNewTaskName(''); // Clear input
+                setNewTaskDuration(30); // Reset duration
+                setMessage(`"${taskToAdd.name}" added to Dumped Tasks.`);
+            };
+
+            // Dummy function for syncing dumped tasks (can be expanded)
+            const syncDumpedTasks = () => {
+                setMessage('Syncing dumped tasks... (Feature to be implemented)');
+                // In a real scenario, you'd send these to a backend or another service
+                // For now, let's just clear them after a "sync"
+                setTimeout(() => {
+                    setDumpedTasks([]);
+                    setMessage('Dumped tasks synced! (Cleared locally)');
+                }, 1500);
+            };
+
+            // Function to add a task directly to a specific day (from DayColumn)
+            const handleAddTaskToDay = (dayDate, name, duration, startTime) => { // Removed color parameter
+                const newId = `scheduled-${Date.now()}`;
+                const newTask = {
+                    id: newId,
+                    name,
+                    duration,
+                    date: dayDate,
+                    time: startTime,
+                    // Removed color from newTask
+                };
+                setScheduledTasks(prev => {
+                    const updated = [...prev, newTask];
+                    return updated.sort((a, b) => {
+                        if (a.date.getTime() !== b.date.getTime()) {
+                            return a.date.getTime() - b.date.getTime();
+                        }
+                        return a.time.getTime() - b.time.getTime();
+                    });
+                });
+                setMessage(`"${name}" added to ${formatDate(dayDate)}.`);
+            };
+
+
+            // Function to manually adjust time or duration for a scheduled task (used by ScheduledTaskItem)
+            const handleScheduledTaskTimeChange = (taskId, newTime, newDuration) => {
+                setScheduledTasks(prev => prev.map(task => {
+                    if (task.id === taskId) {
+                        // Ensure newTime is on the same day as task.date
+                        const updatedTime = new Date(task.date);
+                        updatedTime.setHours(newTime.getHours(), newTime.getMinutes(), 0, 0);
+
+                        return {
+                            ...task,
+                            time: updatedTime,
+                            duration: newDuration,
+                        };
+                    }
+                    return task;
+                }).sort((a, b) => {
+                    // Re-sort by day then by time
+                    if (a.date.getTime() !== b.date.getTime()) {
+                        return a.date.getTime() - b.date.getTime();
+                    }
+                    return a.time.getTime() - b.time.getTime();
+                }));
+            };
+
+            // Helper for current slot highlighting
+            const isCurrentSlot = (dayDate, slotTime) => {
+                const now = new Date();
+                return dayDate.toDateString() === now.toDateString() &&
+                       slotTime.getHours() === now.getHours() &&
+                       (now.getMinutes() >= slotTime.getMinutes() && now.getMinutes() < (slotTime.getMinutes() + 30));
+            };
+
+            // Function to scroll the day columns left/right
+            const scrollDays = (direction) => {
+                if (dayColumnsRef.current) {
+                    const scrollAmount = COLUMN_WIDTH_PX; // Scroll by one column width
+                    dayColumnsRef.current.scrollBy({
+                        left: direction === 'left' ? -scrollAmount : scrollAmount,
+                        behavior: 'smooth'
+                    });
+                }
+            };
+
+            return (
+                <div className="p-4 bg-gray-50 flex space-x-4 w-full min-h-[calc(100vh-40px)]">
+                    {/* Left Panel: Task Management */}
+                    <div className="flex-shrink-0 w-80 flex flex-col space-y-4"> {/* Fixed width for left panel */}
+                        {/* Today's Date Display */}
+                        <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 text-center">
+                            <h2 className="text-lg font-semibold text-gray-800">Today is</h2>
+                            <p className="text-xl font-bold text-blue-600">{formatFullDate(new Date())}</p>
+                        </div>
+
+                        {/* Top Tasks */}
+                        <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 flex-grow">
+                            <h2 className="text-lg font-semibold text-gray-800 mb-3">Top Tasks</h2> {/* Changed title */}
+                            <div className="space-y-2 custom-scrollbar overflow-y-auto h-[322px]"> {/* Accommodate 7 tasks */}
+                                {topTasks.length === 0 && <p className="text-gray-500 text-sm">No top tasks. Drag from dump or add new.</p>}
+                                {topTasks.map((task, index) => (
+                                    <TaskItem
+                                        key={task.id}
+                                        task={task}
+                                        index={index}
+                                        onDragStart={(e, t, idx) => handleDragStart(e, t, idx, 'top')}
+                                        onDragEnd={handleDragEnd}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Brain Dump */}
+                        <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 flex-grow">
+                            <h2 className="text-lg font-semibold text-gray-800 mb-3">Brain Dump</h2> {/* Changed title */}
+                            <div className="space-y-2 custom-scrollbar overflow-y-auto h-[690px]"> {/* Accommodate 15 tasks */}
+                                {dumpedTasks.length === 0 && <p className="text-gray-500 text-sm">No dumped tasks. Add new ones!</p>}
+                                {dumpedTasks.map((task, index) => (
+                                    <TaskItem
+                                        key={task.id}
+                                        task={task}
+                                        index={index}
+                                        onDragStart={(e, t, idx) => handleDragStart(e, t, idx, 'dumped')}
+                                        onDragEnd={handleDragEnd}
+                                    />
+                                ))}
+                            </div>
+                            <button
+                                onClick={syncDumpedTasks}
+                                className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 shadow-md"
+                            >
+                                Sync Dumped Tasks
+                            </button>
+                        </div>
+
+                        {/* Add New Task Section (for dumping) */}
+                        <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200">
+                            <h2 className="text-lg font-semibold text-gray-800 mb-3">Add New Task to Dump</h2>
+                            <div className="space-y-3">
+                                <div>
+                                    <label htmlFor="newTaskName" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Task Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="newTaskName"
+                                        value={newTaskName}
+                                        onChange={(e) => setNewTaskName(e.target.value)}
+                                        placeholder="e.g., Plan next sprint"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-800"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="newTaskDuration" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Duration (minutes)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="newTaskDuration"
+                                        value={newTaskDuration}
+                                        onChange={(e) => setNewTaskDuration(parseInt(e.target.value) || 0)}
+                                        min="5"
+                                        step="5"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-800"
+                                    />
+                                </div>
+                                {/* Removed color picker */}
+                                <button
+                                    onClick={handleAddTaskToDump} // Changed to handleAddTaskToDump
+                                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 shadow-md"
+                                >
+                                    Add Task to Dump
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right Panel: Multi-Day Time Slots */}
+                    <div className="flex-1 bg-white p-4 rounded-lg shadow-md border border-gray-200 overflow-hidden flex flex-col">
+                        <div className="flex justify-between items-center mb-3">
+                            <h2 className="text-lg font-semibold text-gray-800">Board</h2>
+                            <div className="flex space-x-2">
+                                <button
+                                    onClick={() => scrollDays('left')}
+                                    className="px-3 py-1 bg-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-300"
+                                >
+                                    &lt;
+                                </button>
+                                <button
+                                    onClick={scrollToToday}
+                                    className="px-3 py-1 bg-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-300"
+                                >
+                                    Today
+                                </button>
+                                <button
+                                    onClick={() => scrollDays('right')}
+                                    className="px-3 py-1 bg-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-300"
+                                >
+                                    &gt;
+                                </button>
+                                <button className="px-3 py-1 bg-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-300">Filter</button>
+                            </div>
+                        </div>
+
+                        <div ref={dayColumnsRef} className="flex flex-nowrap overflow-x-scroll custom-scrollbar flex-grow"> {/* Changed to flex for horizontal scroll */}
+                            {days.map((dayDate, dayIndex) => (
+                                <DayColumn
+                                    key={dayDate.toISOString()} /* Use ISO string for stable key */
+                                    dayDate={dayDate}
+                                    scheduledTasksForDay={scheduledTasks.filter(task => task.date && task.date.toDateString() === dayDate.toDateString())}
+                                    timeSlotsForDay={generateAllTimeSlotsForDay(dayDate)} /* Pass all slots for internal filtering */
+                                    timeUnitHeightPx={TIME_UNIT_HEIGHT_PX} /* Pass timeUnitHeightPx */
+                                    onDragStart={handleDragStart}
+                                    onDragEnd={handleDragEnd}
+                                    onTimeSlotDrop={handleTimeSlotDrop}
+                                    onScheduledTaskTimeChange={handleScheduledTaskTimeChange}
+                                    onRemovePlaceholder={handleRemovePlaceholder}
+                                    onDeleteTask={handleDeleteTask}
+                                    onAddTaskToDay={handleAddTaskToDay}
+                                    isCurrentDay={dayDate.toDateString() === new Date().toDateString()}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Message display area */}
+                    {message && (
+                        <p className={`absolute bottom-4 left-1/2 -translate-x-1/2 p-2 rounded-md shadow-lg text-sm font-medium text-center ${message.includes('failed') || message.includes('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                            {message}
+                        </p>
+                    )}
+
+                    {/* Confirmation Modal */}
+                    {isModalOpen && modalTaskInfo && (
+                        <ConfirmationModal
+                            isOpen={isModalOpen}
+                            onClose={() => setIsModalOpen(false)}
+                            taskName={modalTaskInfo.task.name}
+                            fromDay={modalTaskInfo.fromDay}
+                            toDay={modalTaskInfo.toDay}
+                            onConfirmMove={confirmMoveTask}
+                            onConfirmDuplicate={confirmDuplicateTask}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // Render the App component into the root div
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
