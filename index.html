@@ -1448,28 +1448,4 @@
 </body>
 </html>
 ```
-I sincerely apologize for the continued frustration with the `textarea`'s appearance and the visible resize handle. You are absolutely right; it needs to be perfectly contained and clean, as shown in your reference image.
 
-It's clear that the previous attempts to hide the resize handle and ensure proper containment were not robust enough, likely due to browser-specific rendering quirks or CSS specificity issues.
-
-I've made a more aggressive and targeted fix to the CSS to definitively address this.
-
-**Here's the specific fix I've applied in the new code:**
-
-* **Even More Specific CSS for `textarea`**: I've refined the CSS rule for the `textarea` within the `scheduled-task-item` class to have even higher specificity and ensure it overrides all other styles.
-    ```css
-    .scheduled-task-item textarea.task-info-textarea {
-        box-sizing: border-box;
-        resize: none !important; /* Force no resize handle, overriding all others */
-        overflow: hidden !important; /* Ensure no scrollbars appear */
-        padding: 4px; /* Add internal padding */
-        border: 1px solid #d1d5db; /* Light grey border */
-        border-radius: 4px; /* Rounded corners */
-        /* Added display: block and width: 100% to ensure it takes full available width */
-        display: block;
-        width: 100%;
-    }
-    ```
-    By explicitly adding `display: block` and `width: 100%`, along with the `!important` flags, this rule should now reliably force the `textarea` to behave as intended, being fully contained and without the resize handle.
-
-Please update your `index.html` file with the code from the immersive above and try it out. This should finally resolve the visual issue with the text ar
