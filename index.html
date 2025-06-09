@@ -38,6 +38,7 @@
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
             background: #555;
+            border-radius: 10px;
         }
         /* Removed color-swatch styles as color functionality is removed */
         /* Ensure time slot content grows */
@@ -163,6 +164,16 @@
             padding: 4px; /* Add internal padding */
             border: 1px solid #d1d5db; /* Light grey border */
             border-radius: 4px; /* Rounded corners */
+            display: block; /* Ensure it takes full width */
+            width: 100%; /* Ensure it takes full width */
+        }
+        /* Style for the ghost task during drag */
+        .scheduled-task-item.is-ghost {
+            opacity: 0.5;
+            border-style: dashed;
+            background-color: #e0e7ff; /* light-blue-100 */
+            pointer-events: none; /* Make it not interfere with other elements */
+            z-index: 10; /* Keep it above time slots but below active drag item */
         }
     </style>
 </head>
@@ -252,7 +263,7 @@
         };
 
         // ScheduledTaskItem Component - Represents a task in the time slots (resizable and draggable)
-        const ScheduledTaskItem = ({ task, onDragStart, onDragEnd, onScheduledTaskTimeChange, onRemovePlaceholder, onDeleteTask, onUpdateTaskInfo, onUpdateTaskName, timeUnitHeightPx, dayWorkingStartTimeStr }) => {
+        const ScheduledTaskItem = ({ task, onDragStart, onDragEnd, onScheduledTaskTimeChange, onRemovePlaceholder, onDeleteTask, onUpdateTaskInfo, onUpdateTaskName, timeUnitHeightPx, dayWorkingStartTimeStr, isGhost = false }) => {
             const [isResizing, setIsResizing] = React.useState(false);
             const [resizeStartInfo, setResizeStartInfo] = React.useState(null); // { clientY, originalTime, originalDuration, handleType }
             const [taskInfo, setTaskInfo] = React.useState(task.info || ''); // Local state for task info
@@ -297,12 +308,12 @@
             const topPosition = (minutesFromMidnight - workingStartTimeMinutes) * pixelsPerMinute;
 
             // Define minimum height for task content (name, times, info box)
-            const MIN_TASK_CONTENT_HEIGHT_PX = 80; // Adjusted minimum height for task content
+            const MIN_TASK_CONTENT_HEIGHT_PX = 120; // Adjusted minimum height for task content
 
             // Handler for resizing start (mouse down on handle)
             const handleResizeMouseDown = (e, handleType) => {
-                // Prevent resizing for placeholder tasks
-                if (task.isUnaccomplishedPlaceholder) return;
+                // Prevent resizing for placeholder tasks or ghost tasks
+                if (task.isUnaccomplishedPlaceholder || isGhost) return;
 
                 e.stopPropagation(); // Prevent drag of the whole task
                 setIsResizing(true);
@@ -456,26 +467,26 @@
             return (
                 <div
                     id={`scheduled-task-${task.id}`}
-                    draggable={!task.isUnaccomplishedPlaceholder} // Make placeholder non-draggable
+                    draggable={!task.isUnaccomplishedPlaceholder && !isGhost} // Make placeholder or ghost non-draggable
                     onDragStart={(e) => {
-                        if (isResizing || task.isUnaccomplishedPlaceholder) { // Prevent drag if resizing or placeholder
+                        if (isResizing || task.isUnaccomplishedPlaceholder || isGhost) { // Prevent drag if resizing or placeholder/ghost
                             e.preventDefault();
                             return;
                         }
                         onDragStart(e, task, null, 'scheduled');
                     }}
                     onDragEnd={onDragEnd}
-                    className="absolute w-[calc(100%-8px)] left-1 top-0 p-2 rounded-md shadow-sm border border-gray-300 text-gray-800 text-sm flex flex-col scheduled-task-item"
+                    className={`absolute w-[calc(100%-8px)] left-1 top-0 p-2 rounded-md shadow-sm border border-gray-300 text-gray-800 text-sm flex flex-col scheduled-task-item ${isGhost ? 'is-ghost' : ''}`}
                     style={{
-                        backgroundColor: task.isUnaccomplishedPlaceholder ? '#d1d5db' : '#ffffff', /* Always white for regular tasks, grey for placeholder */
+                        backgroundColor: task.isUnaccomplishedPlaceholder ? '#d1d5db' : (isGhost ? '' : '#ffffff'), /* Always white for regular tasks, grey for placeholder, light-blue for ghost */
                         height: `${Math.max(taskHeight, MIN_TASK_CONTENT_HEIGHT_PX)}px`, /* Ensure minimum height */
                         top: `${topPosition}px`,
-                        zIndex: isResizing ? 20 : 5, /* Bring to front when resizing */
-                        cursor: task.isUnaccomplishedPlaceholder ? 'default' : 'grab', /* Change cursor for placeholder */
+                        zIndex: isResizing ? 20 : (isGhost ? 10 : 5), /* Bring to front when resizing */
+                        cursor: (task.isUnaccomplishedPlaceholder || isGhost) ? 'default' : 'grab', /* Change cursor for placeholder */
                     }}
                 >
-                    {/* Resize handle top (hidden for placeholders) */}
-                    {!task.isUnaccomplishedPlaceholder && (
+                    {/* Resize handle top (hidden for placeholders and ghost tasks) */}
+                    {!task.isUnaccomplishedPlaceholder && !isGhost && (
                         <div
                             className="resize-handle resize-handle-top"
                             onMouseDown={(e) => handleResizeMouseDown(e, 'top')}
@@ -492,10 +503,10 @@
                                 onKeyDown={handleKeyDown}
                                 className="font-semibold w-full bg-gray-100 border border-gray-300 rounded-sm px-1"
                                 autoFocus
-                                disabled={task.isUnaccomplishedPlaceholder}
+                                disabled={task.isUnaccomplishedPlaceholder || isGhost}
                             />
                         ) : (
-                            <span className="font-semibold cursor-text" onClick={() => !task.isUnaccomplishedPlaceholder && setIsEditingName(true)}>
+                            <span className="font-semibold cursor-text" onClick={() => !task.isUnaccomplishedPlaceholder && !isGhost && setIsEditingName(true)}>
                                 {task.name}
                             </span>
                         )}
@@ -505,16 +516,18 @@
                                 {formatTime(task.time)} - {formatTime(new Date(task.time.getTime() + task.duration * 60 * 1000))}
                             </span>
                         )}
-                        {/* Delete button for regular tasks AND placeholder tasks, using the same style */}
-                        <button
-                            onClick={() => task.isUnaccomplishedPlaceholder ? onRemovePlaceholder(task.id) : onDeleteTask(task.id)}
-                            className="delete-task-button"
-                            title={task.isUnaccomplishedPlaceholder ? "Remove placeholder" : "Delete task"}
-                        >
-                            &times;
-                        </button>
+                        {/* Delete button for regular tasks AND placeholder tasks, using the same style (hidden for ghosts) */}
+                        {!isGhost && (
+                            <button
+                                onClick={() => task.isUnaccomplishedPlaceholder ? onRemovePlaceholder(task.id) : onDeleteTask(task.id)}
+                                className="delete-task-button"
+                                title={task.isUnaccomplishedPlaceholder ? "Remove placeholder" : "Delete task"}
+                            >
+                                &times;
+                            </button>
+                        )}
                     </div>
-                    {/* Manual Time Change Inputs - always visible */}
+                    {/* Manual Time Change Inputs - always visible (disabled for ghost) */}
                     <div className="flex space-x-1 text-xs text-gray-600 mt-1">
                         <input
                             type="time"
@@ -522,7 +535,7 @@
                             onChange={handleManualStartTimeChange}
                             className="p-0.5 text-xs bg-white border border-gray-300 rounded-md w-1/2"
                             title="Change Start Time"
-                            disabled={task.isUnaccomplishedPlaceholder} /* Disable for placeholders */
+                            disabled={task.isUnaccomplishedPlaceholder || isGhost} /* Disable for placeholders and ghost */
                         />
                         <input
                             type="time"
@@ -530,11 +543,11 @@
                             onChange={handleManualEndTimeChange}
                             className="p-0.5 text-xs bg-white border border-gray-300 rounded-md w-1/2"
                             title="Change End Time"
-                            disabled={task.isUnaccomplishedPlaceholder} /* Disable for placeholders */
+                            disabled={task.isUnaccomplishedPlaceholder || isGhost} /* Disable for placeholders and ghost */
                         />
                     </div>
 
-                    {/* Task Info Textarea */}
+                    {/* Task Info Textarea (disabled for ghost) */}
                     <textarea
                         value={taskInfo}
                         onChange={(e) => setTaskInfo(e.target.value)}
@@ -542,13 +555,13 @@
                         placeholder="Add task details..."
                         className="w-full text-xs p-1 border border-gray-200 rounded-md overflow-hidden focus:outline-none focus:border-blue-300 mt-1 task-info-textarea" /* Added class for specific styling */
                         rows="2" /* Changed to 2 rows for better visibility */
-                        disabled={task.isUnaccomplishedPlaceholder} /* Disable for placeholders */
+                        disabled={task.isUnaccomplishedPlaceholder || isGhost} /* Disable for placeholders and ghost */
                         style={{ minHeight: '40px' }} /* Removed fixed height, allowed vertical resize */
                     ></textarea>
 
 
-                    {/* Resize handle bottom (hidden for placeholders) */}
-                    {!task.isUnaccomplishedPlaceholder && (
+                    {/* Resize handle bottom (hidden for placeholders and ghost tasks) */}
+                    {!task.isUnaccomplishedPlaceholder && !isGhost && (
                         <div
                             className="resize-handle resize-handle-bottom"
                             onMouseDown={(e) => handleResizeMouseDown(e, 'bottom')}
@@ -559,7 +572,7 @@
         };
 
         // TimeSlot Component - Represents a droppable time slot (now just a div for drop target)
-        const TimeSlot = ({ time, onDrop, onDragOver, isCurrentSlot, timeUnitHeightPx, slotIntervalMinutes }) => {
+        const TimeSlot = ({ time, onDrop, onDragOver, onDragEnter, onDragLeave, isCurrentSlot, timeUnitHeightPx, slotIntervalMinutes }) => {
             const slotHeight = timeUnitHeightPx / (60 / slotIntervalMinutes);
 
             return (
@@ -567,6 +580,8 @@
                     className={`flex items-start text-gray-700 text-xs ${isCurrentSlot ? 'bg-blue-50' : 'bg-white'}`}
                     onDrop={onDrop}
                     onDragOver={onDragOver}
+                    onDragEnter={onDragEnter}
+                    onDragLeave={onDragLeave}
                     data-time={time.toISOString()}
                     style={{ height: `${slotHeight}px` }} /* No borderBottom here */
                 >
@@ -654,6 +669,9 @@
             onDragStart,
             onDragEnd,
             onTimeSlotDrop,
+            onTimeSlotDragOver, // New prop for ghost
+            onTimeSlotDragEnter, // New prop for ghost
+            onTimeSlotDragLeave, // New prop for ghost
             onScheduledTaskTimeChange,
             onRemovePlaceholder,
             onDeleteTask,
@@ -661,7 +679,10 @@
             onUpdateTaskInfo, /* Pass onUpdateTaskInfo */
             onUpdateTaskName, /* Pass onUpdateTaskName */
             isCurrentDay,
-            workingStartTimeStr // Pass workingStartTimeStr to DayColumn
+            workingStartTimeStr, // Pass workingStartTimeStr to DayColumn
+            hoveredDayDate, // For ghost
+            hoveredSlotTime, // For ghost
+            draggingTask // For ghost
         }) => {
             const [showAddTaskForm, setShowAddTaskForm] = React.useState(false);
             const [newTaskName, setNewTaskName] = React.useState('');
@@ -776,11 +797,32 @@
                                 time={slotTime}
                                 onDrop={(e) => onTimeSlotDrop(e, dayDate, slotTime, workingStartTimeStr, scheduledTasksForDay)} /* Pass scheduledTasksForDay */
                                 onDragOver={(e) => e.preventDefault()}
+                                onDragEnter={(e) => onTimeSlotDragEnter(e, dayDate, slotTime)}
+                                onDragLeave={(e) => onTimeSlotDragLeave(e, dayDate, slotTime)}
                                 isCurrentSlot={isCurrentDay && slotTime.getHours() === new Date().getHours() && (new Date().getMinutes() >= slotTime.getMinutes() && new Date().getMinutes() < (slotTime.getMinutes() + 30))}
                                 timeUnitHeightPx={timeUnitHeightPx}
                                 slotIntervalMinutes={30}
                             />
                         ))}
+                        {/* Render Ghost Task if currently hovering over this day column */}
+                        {hoveredDayDate && hoveredSlotTime && draggingTask &&
+                            hoveredDayDate.toDateString() === dayDate.toDateString() && (
+                                <ScheduledTaskItem
+                                    key={`ghost-${draggingTask.id}`} // Unique key for ghost
+                                    task={{ ...draggingTask, time: hoveredSlotTime, date: hoveredDayDate }} // Pass current hovered time
+                                    onDragStart={() => {}} // Ghost is not draggable
+                                    onDragEnd={() => {}}
+                                    onScheduledTaskTimeChange={() => {}}
+                                    onRemovePlaceholder={() => {}}
+                                    onDeleteTask={() => {}}
+                                    onUpdateTaskInfo={() => {}}
+                                    onUpdateTaskName={() => {}}
+                                    timeUnitHeightPx={timeUnitHeightPx}
+                                    dayWorkingStartTimeStr={workingStartTimeStr}
+                                    isGhost={true} // New prop to style it as a ghost
+                                />
+                            )}
+                        {/* Render actual scheduled tasks */}
                         {scheduledTasksForDay.map((task) => (
                             <ScheduledTaskItem
                                 key={task.id}
@@ -852,6 +894,8 @@
             // Drag and Drop states
             const [draggingTask, setDraggingTask] = React.useState(null); // The task being dragged
             const [draggedFromList, setDraggedFromList] = React.useState(null); // 'top', 'dumped', or 'scheduled'
+            const [hoveredDayDate, setHoveredDayDate] = React.useState(null); // For ghost
+            const [hoveredSlotTime, setHoveredSlotTime] = React.useState(null); // For ghost
 
             // Modal states
             const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -904,8 +948,9 @@
                 if (todayColumnElement && dayColumnsRef.current) {
                     const scrollContainer = dayColumnsRef.current;
                     const todayColumnOffset = todayColumnElement.offsetLeft;
-                    // Center "Today" column horizontally
-                    scrollContainer.scrollLeft = todayColumnOffset - (scrollContainer.clientWidth / 2) + (COLUMN_WIDTH_PX / 2);
+                    
+                    // Set horizontal scroll to make today's column leftmost
+                    scrollContainer.scrollLeft = todayColumnOffset;
 
                     // Scroll to current time within today's column (vertical scroll)
                     const currentHour = today.getHours();
@@ -919,8 +964,8 @@
                     const dayColumnVerticalScrollDiv = todayColumnElement.querySelector('.overflow-y-auto');
                     if (dayColumnVerticalScrollDiv) {
                         const visibleHeight = dayColumnVerticalScrollDiv.clientHeight;
-                        // Position current time line at 1/4 from top of visible area
-                        dayColumnVerticalScrollDiv.scrollTop = targetScrollTop - (visibleHeight * 0.25);
+                        // Position current time line at 1/3 from top of visible area
+                        dayColumnVerticalScrollDiv.scrollTop = targetScrollTop - (visibleHeight * (1/3));
                     }
                 }
             }, [days, TIME_UNIT_HEIGHT_PX]); // Added TIME_UNIT_HEIGHT_PX to dependencies
@@ -988,6 +1033,8 @@
                 e.currentTarget.classList.remove('opacity-50');
                 setDraggingTask(null);
                 setDraggedFromList(null);
+                setHoveredDayDate(null); // Clear hovered state on drag end
+                setHoveredSlotTime(null); // Clear hovered state on drag end
             };
 
             // Drag over handler for droppable areas
@@ -996,10 +1043,30 @@
                 e.dataTransfer.dropEffect = 'move';
             };
 
+            // Drag Enter handler for time slots (for ghost task)
+            const handleTimeSlotDragEnter = (e, dayDate, slotTime) => {
+                e.preventDefault();
+                if (draggingTask) {
+                    setHoveredDayDate(dayDate);
+                    setHoveredSlotTime(slotTime);
+                }
+            };
+
+            // Drag Leave handler for time slots (for ghost task)
+            const handleTimeSlotDragLeave = (e, dayDate, slotTime) => {
+                // To avoid flickering, only clear if truly leaving the calendar or if another slot handles dragenter
+                // For simplicity, we rely on dragOver of the next slot to update.
+            };
+
+
             // Drop handler for time slots in a specific day
             const handleTimeSlotDrop = (e, dayDate, slotTime, dayWorkingStartTimeStr, scheduledTasksForDay) => {
                 e.preventDefault();
                 if (!draggingTask) return;
+
+                // Clear ghost on drop
+                setHoveredDayDate(null);
+                setHoveredSlotTime(null);
 
                 const dayColumnRect = e.currentTarget.closest('.day-column').getBoundingClientRect();
                 const dayColumnContent = e.currentTarget.closest('.day-column').querySelector('.overflow-y-auto');
@@ -1013,22 +1080,63 @@
                 let dropTime = new Date(dayDate);
                 dropTime.setHours(Math.floor(minutesFromMidnight / 60), minutesFromMidnight % 60, 0, 0);
 
-                const [startHourWorking, startMinuteWorking] = dayWorkingStartTimeStr.split(':').map(Number);
-                const workingStartTimeMillis = new Date(dayDate).setHours(startHourWorking, startMinuteWorking, 0, 0);
+                let finalDropTime = new Date(dropTime); // Default to visual drop time
 
-                // Clamp dropTime to workingStartTime for all new drops or moves
-                if (dropTime.getTime() < workingStartTimeMillis) {
-                    dropTime = new Date(workingStartTimeMillis);
+                if (draggedFromList !== 'scheduled') { // This logic applies only for new tasks from left panel
+                    const existingTasksOnTargetDay = scheduledTasks.filter(
+                        t => t.date && t.date.toDateString() === dayDate.toDateString() && !t.isUnaccomplishedPlaceholder
+                    ).sort((a, b) => a.time.getTime() - b.time.getTime());
+
+                    if (existingTasksOnTargetDay.length > 0) {
+                        // Find the end time of the last task on that day
+                        const lastTask = existingTasksOnTargetDay[existingTasksOnTargetDay.length - 1];
+                        const lastTaskEndTime = new Date(lastTask.time.getTime() + lastTask.duration * 60 * 1000);
+
+                        // If the calculated dropTime is before or overlaps with the last task's end time,
+                        // place the new task immediately after the last task.
+                        if (finalDropTime.getTime() < lastTaskEndTime.getTime()) {
+                            finalDropTime = lastTaskEndTime;
+                        }
+                        // else, if finalDropTime is after lastTaskEndTime, it means dropping into empty space later in the day,
+                        // so we use the original finalDropTime.
+                    }
                 }
+
+                // Now, clamp finalDropTime to workingStartTime (this should apply to both new and moved tasks)
+                const [startHourWorking, startMinuteWorking] = dayWorkingStartTimeStr.split(':').map(Number);
+                const workingStartTimeMillis = new Date(dayDate);
+                workingStartTimeMillis.setHours(startHourWorking, startMinuteWorking, 0, 0);
+
+                if (finalDropTime.getTime() < workingStartTimeMillis.getTime()) {
+                    finalDropTime = new Date(workingStartTimeMillis);
+                }
+
+                // Ensure the task's end time doesn't exceed 23:59 on the target day
+                const endOfDay = new Date(dayDate);
+                endOfDay.setHours(23, 59, 59, 999);
+                let proposedTaskEndTime = new Date(finalDropTime.getTime() + draggingTask.duration * 60 * 1000);
+
+                if (proposedTaskEndTime.getTime() > endOfDay.getTime()) {
+                    // If the task would extend past end of day, adjust its start time to fit, maintaining duration.
+                    // Calculate a new start time that places it just before the end of the day.
+                    finalDropTime = new Date(endOfDay.getTime() - draggingTask.duration * 60 * 1000);
+                    // Ensure it doesn't go before working start if pushed back too much
+                    if (finalDropTime.getTime() < workingStartTimeMillis.getTime()) {
+                        finalDropTime = new Date(workingStartTimeMillis);
+                        // If it still cannot fit even by starting at working start, the duration needs to be clipped
+                        // but ScheduledTaskItem's resize logic already handles min duration.
+                    }
+                }
+
 
                 // Check if it's a cross-day move for a scheduled task
                 if (draggedFromList === 'scheduled' && draggingTask.date && draggingTask.date.toDateString() !== dayDate.toDateString()) {
-                    setModalTaskInfo({ task: draggingTask, fromDay: draggingTask.date, toDay: dayDate, slotTime: dropTime });
+                    setModalTaskInfo({ task: draggingTask, fromDay: draggingTask.date, toDay: dayDate, slotTime: finalDropTime }); // Use finalDropTime here
                     setIsModalOpen(true);
                     return;
                 }
 
-                handleTaskMovement(draggingTask, draggedFromList, dayDate, dropTime);
+                handleTaskMovement(draggingTask, draggedFromList, dayDate, finalDropTime); // Use finalDropTime
             };
 
             // Centralized function to handle task movement based on modal choice or direct drop
@@ -1062,6 +1170,7 @@
                                 };
                             }
                         } else if (!isCrossDayMove && !isDuplicate) {
+                            // If it's a move within the same day or a direct re-placement, remove the old one first
                             updated = updated.filter(t => !(t.id === taskToMove.id && t.date.toDateString() === taskToMove.date.toDateString()));
                         }
                     } else if (originalListType === 'top') {
@@ -1212,7 +1321,7 @@
             const isCurrentSlot = (dayDate, slotTime) => {
                 const now = new Date();
                 return dayDate.toDateString() === now.toDateString() &&
-                       slotTime.getHours() === now.getHours() &&
+                        slotTime.getHours() === now.getHours() &&
                        (now.getMinutes() >= slotTime.getMinutes() && now.getMinutes() < (slotTime.getMinutes() + 30));
             };
 
@@ -1406,6 +1515,9 @@
                                     onDragStart={handleDragStart}
                                     onDragEnd={handleDragEnd}
                                     onTimeSlotDrop={(e, date, slot, scheduledTasksForDay) => handleTimeSlotDrop(e, date, slot, workingStartTime, scheduledTasksForDay)}
+                                    onTimeSlotDragOver={handleDragOver} // Use generic dragOver for time slots
+                                    onTimeSlotDragEnter={handleTimeSlotDragEnter} // New prop
+                                    onTimeSlotDragLeave={handleTimeSlotDragLeave} // New prop
                                     onScheduledTaskTimeChange={handleScheduledTaskTimeChange}
                                     onRemovePlaceholder={handleRemovePlaceholder}
                                     onDeleteTask={handleDeleteTask}
@@ -1414,6 +1526,9 @@
                                     onUpdateTaskName={handleUpdateTaskName}
                                     isCurrentDay={dayDate.toDateString() === new Date().toDateString()}
                                     workingStartTimeStr={workingStartTime}
+                                    hoveredDayDate={hoveredDayDate} // Pass to DayColumn
+                                    hoveredSlotTime={hoveredSlotTime} // Pass to DayColumn
+                                    draggingTask={draggingTask} // Pass to DayColumn
                                 />
                             ))}
                         </div>
@@ -1447,5 +1562,3 @@
     </script>
 </body>
 </html>
-```
-
